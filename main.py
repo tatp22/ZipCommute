@@ -9,7 +9,7 @@ locs = {} # {zip : [(lat, long), commute time]}
 accd = []
 temp = {}
 k = 300
-iters = 3
+iters = 8
 
 def parseCSV(filename, fileno):
 	with open(filename) as csvfile:
@@ -38,37 +38,6 @@ def placeInLists(x,y,zips):
 	x = np.array(x)
 	y = np.array(y)
 
-#This filter is supposed to get rid of the outlying zip codes quickly, ones that don't rely on cities
-def getRidOfRuralPointsFast(x,y,zips):
-	locations = np.zeros((len(x),2))
-	locations[:,0] = x
-	locations[:,1] = y
-	iters = 0
-	tol = .05
-	for i in range(len(locations)):
-		iters += 1
-		if iters % 500 == 0:
-			print(iters)
-		if locations[i][0] in temp and temp[locations[i][0]] == locations[i][1]:
-			continue
-		else:
-			temp[locations[i][0]] = locations[i][1]
-		max_dist = 50
-		for j in range(i+1,min(len(locations),100+i)):
-			d = la.norm(locations[i] - locations[j])
-			if d < max_dist:
-				max_dist = d
-			if max_dist < tol:
-				break
-		for j in range(i-100,i):
-			d = la.norm(locations[i] - locations[j])
-			if d < max_dist:
-				max_dist = d
-			if max_dist < tol:
-				break
-		if max_dist > tol:
-			del locs[zips[i]]
-
 def filterLocs():
 	temp_locs = copy.copy(locs)
 	for key in temp_locs:
@@ -84,59 +53,74 @@ def getLocDict():
 			d[locs[key][0]] += 1
 	return d
 
-
-def getClosePoints(key):
-	points = 0
-	thresh = .05
-	arr1 = np.array([locs[key][0][0], locs[key][0][1]])
-	for key1 in locs:
-		arr2 = np.array([locs[key1][0][0], locs[key1][0][1]])
-		n = la.norm(arr1-arr2)
-		if n < thresh:
-			points += 1
-	return points
-
-def citify(x,y,zips):
-	d = getLocDict()
-	n = 2
-	m = 3 #1 + whatYouWant, it counts itself
-	iters = 0
-	for i in range(len(x)):
-		iters += 1
-		if iters % 500 == 0:
-			print(iters)
-		tup = (y[i],x[i])
-		if d[tup] >= n:
-			continue #n zips in the same place, move on...
-		else:
-			#here comes the slow step, although it shouldn't be that bad
-			closePoints = getClosePoints(zips[i])
-			if closePoints < m:
-				del locs[zips[i]]
-
 def getDist(p1,p2):
-	return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)**.5
+	return ((p1[0]-p2[1])**2 + (p1[1]-p2[0])**2)**.5
 
+def removeFromDict(d,x,y):
+	td = copy.copy(d)
+	for i in range(len(x)):
+		tup = (y[i],x[i])
+		for key in td:
+			if key == tup:
+				del d[key]
+				break
+	return d
+	
+def removeFromLocs(l):
+	td = copy.copy(locs)
+	for key in td:
+		if locs[key][0] not in l:
+			del locs[key]
+	
+def tupelize(x,y):
+	l = []
+	for i in range(len(x)):
+		l.append((y[i],x[i]))
+	return l
+
+#initializer
 def superRemove(x,y,zips):
 	d = getLocDict()
-	maxLen = 300
-	c = .18
-	mainList = []
-	pointsToInclude = []
+	maxLen = 100
+	c = .6
+	accx = []
+	accy = []
 	for key in sorted(d, key=d.get, reverse=True):
-		for i in range(len(mainList)):
-			dist = getDist(mainList[i], key)
-			if dist < d[key]*c:
-				pointsToInclude.append(key)
+		if len(accx) == maxLen:
+			break
+		addToList = True
+		for i in range(len(accx)):
+			tup = (accx[i],accy[i])
+			if getDist(tup, key) < c*d[key]:
+				addToList = False
+		if addToList:
+			accx.append(key[1])
+			accy.append(key[0])
+	d = removeFromDict(d,accx,accy)
+	rootx = copy.copy(accx)
+	rooty = copy.copy(accy)
+	iters = 0
+	c = .25
+	for key in d:
+		iters += 1
+		if iters % 1000 == 0:
+			print(iters)
+		for i in range(len(rootx)):
+			tup = rootx[i],rooty[i]
+			if getDist(tup,key) < c*d[key]:
+				accx.append(key[1])
+				accy.append(key[0])
 				break
-		if len(pointsToInclude) == 0 or pointsToInclude[-1] != key:
-			if len(mainList) < maxLen:
-				mainList.append(key)
-	for key, v in list(locs.items()):
-		if locs[key][0] not in mainList and locs[key][0] not in pointsToInclude:
-			del locs[key]
+	l = tupelize(accx,accy)
+	roots = tupelize(rootx, rooty)
+	removeFromLocs(l)
+	x = []
+	y = []
+	zips = []
+	placeInLists(x,y,zips)
+	return x,y,roots,maxLen
 
-def interactWithUser():
+def interactWithUser(d):
 	print("Commute times calculated.")
 	str = ""
 	while str != "n":
@@ -152,11 +136,41 @@ def interactWithUser():
 				print("b. The zip code you entered is not a valid zip code")
 			else:
 				print("Your zip code was found! The aveage commute time for your zip is: ", locs[str][1])
-				print("Your metro area ranks at ", 4,"out of a calculated ",k," metro areas in the country.")
+				print("The commute time for your geographical location is: ",d[str][1])
+				print("Your metro area ranks at ", d[str][2],"out of a calculated ",k," metro areas in the country.")
 		except:
 			print("Please enter a valid zip code")
-			
 
+#get info about each individual zip code...
+def getZipInfoDict(preds,alocs,zips):
+	ret = {} # {zip : [group, group commute time, rank]}
+	groups = {} # {group : [zipcodes, groupCommuteTime, rank]}
+	for i in range(len(alocs)):
+		if preds[i] not in groups:
+			groups[preds[i]] = [[zips[i]],0,0]
+		else:
+			groups[preds[i]][0].append(zips[i])
+	for key in groups:
+		avg = 0
+		arr = groups[key][0]
+		for i in range(len(arr)):
+			groups[key][1] += locs[arr[i]][1]
+		groups[key][1] /= len(arr)
+	#rank the zip codes
+	temp_d = {}
+	for key in groups:
+		temp_d[key] = groups[key][1]
+	iters = 0
+	for key in sorted(temp_d, key=temp_d.get, reverse=False):
+		iters += 1
+		groups[key][2] = iters
+	for key in groups:
+		arr = groups[key][0]
+		for i in range(len(arr)):
+			ret[arr[i]] = [key,groups[key][1],groups[key][2]]
+	return ret
+
+#starts prog
 def main():
 	x = []
 	y = []
@@ -164,36 +178,24 @@ def main():
 	readInFiles()
 	placeInLists(x,y,zips)
 	print("Num points initially: ", len(x))
-	plotting.scatterBasic(x,y)
-	superRemove(x,y,zips)
-	x = []
-	y = []
-	zips = []
-	placeInLists(x,y,zips)
+	#plotting.scatterBasic(x,y)
+	x,y,roots,maxLen = superRemove(x,y,zips)
 	print("Num points after super filter: ", len(x))
-	plotting.scatterBasic(x,y)
+	#plotting.scatterBasic(x,y)
 	filterLocs()
 	x = []
 	y = []
 	zips = []
 	placeInLists(x,y,zips)
 	print("Num points after removing places with no commute times: ", len(x))
-	plotting.scatterBasic(x,y)
-	'''
-	citify(x,y,zips)
-	x = []
-	y = []
-	zips = []
-	placeInLists(x,y,zips)
-	print("Num points after second filter: ", len(x))
-	'''
 	#plotting.scatterBasic(x,y)
 	#1. Cluster nodes into n (250 for now) groups based on k-means
-	centers, preds, locs = ml.kmeans(k, iters, x,y)
-	plotting.plotCenter(centers)
-	plotting.plotScatterColor(locs,preds,k)
+	centers, preds, locs = ml.kmeans(k,iters,x,y,roots,maxLen)
+	#plotting.plotCenter(centers)
+	#plotting.plotScatterColor(locs,preds,k)
 	#2. With these clusters, get the average commute time with all the zip codes
+	zipInfoDict = getZipInfoDict(preds,locs,zips)
 	#3. Rank them somehow... Maybe I can use the names from earlier? Or maybe some machine learning can come into play...
-	interactWithUser()
+	interactWithUser(zipInfoDict)
 
 main()
